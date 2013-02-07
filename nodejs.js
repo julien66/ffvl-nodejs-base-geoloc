@@ -1,4 +1,3 @@
-
 (function ($) {
 
 Drupal.Nodejs = Drupal.Nodejs || {
@@ -44,6 +43,7 @@ Drupal.Nodejs.runCallbacks = function (message) {
       if ($.isFunction(this.callback)) {
         try {
           this.callback(message);
+          console.log(message);
         }
         catch (exception) {}
       }

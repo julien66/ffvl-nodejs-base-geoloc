@@ -1,6 +1,44 @@
 <?php
 
 /**
+ * Implementation of hook_enable().
+ */
+function nodejs_enable() {
+  if (!field_info_field('field_trackeur')) { // Check if our field is not already created.
+    $field = array(
+        'field_name' => 'field_trackeur', 
+        'type' => 'text',
+    );
+    field_create_field($field);
+
+    // Create the instance on the bundle.
+    $instance = array(
+        'field_name' => 'field_trackeur', 
+	'description' => t("Entrez l'identifiant de votre trackeur"),
+        'entity_type' => 'user', 
+        'label' => 'Mon trackeur', 
+        'bundle' => 'user', 
+        'widget' => array(
+            'type' => 'textfield',
+        ), 
+    );
+    field_create_instance($instance);
+  }
+}
+	
+
+/**
+ * Implementation of hook_disable().
+ */
+/*function nodejs_disable(){
+	if (field_info_field('field_trackeur')) { // Check if our field is not already created.
+		field_delete_field('field_trackeur'); // Détruit le field_trackeur.
+		field_purge_batch(1);
+  	}
+}*/
+
+
+/**
  * Generate a token for a piece of content.
  */
 function nodejs_generate_content_token() {
@@ -441,6 +479,18 @@ function nodejs_message_handler() {
       nodejs_user_set_offline($message['uid']);
       break;
 
+    case 'userOnline':
+      nodejs_user_set_online($message['uid']);
+      break;
+
+    case 'deviceOnline' :
+	nodejs_device_set_online($message['uid']);
+    break;
+
+    case 'deviceOffline' :
+	nodejs_device_set_offline($message['uid']);
+    break;
+
     default:
       $handlers = array();
       foreach (module_implements('nodejs_message_callback') as $module) {
@@ -471,6 +521,12 @@ function nodejs_auth_check($message) {
   $auth_user->nodejsValidAuthToken = $uid !== FALSE;
   $auth_user->clientId = $message['clientId'];
 
+  $auth_user->type = 'drupaluser';
+  if ( substr($message['authToken'],0,5) == 'uuid-' ){ // Le message vient de PhoneGap.
+	$auth_user->type = 'phoneuser';
+	$auth_user->authToken = substr($message['authToken'],5);
+  }
+
   if ($auth_user->nodejsValidAuthToken) {
     // Get the list of channels I have access to.
     $auth_user->channels = array();
@@ -488,8 +544,11 @@ function nodejs_auth_check($message) {
     $auth_user->serviceKey = $nodejs_config['serviceKey'];
     drupal_add_http_header('NodejsServiceKey', $nodejs_config['serviceKey']);
     drupal_alter('nodejs_auth_user', $auth_user);
-    if ($auth_user->uid) {
+    if ($auth_user->uid && $auth_user->type == 'drupaluser') {
       nodejs_user_set_online($auth_user->uid);
+    }
+    else if ($auth_user->uid && $auth_user->type == 'phoneuser'){
+	nodejs_device_set_online($auth_user->uid);
     }
     $auth_user->contentTokens = isset($message['contentTokens']) ? $message['contentTokens'] : array();
   }
@@ -500,7 +559,13 @@ function nodejs_auth_check($message) {
  * Default Node.js auth check callback implementation.
  */
 function nodejs_auth_check_callback($auth_token) {
+  if (substr($auth_token,0,5) == 'uuid-' ){
+	return db_query("SELECT entity_id FROM {field_data_field_trackeur} WHERE field_trackeur_value = :uuid", array(':uuid' => substr($auth_token,5) ))->fetchField();
+  }
+  else
+  {
   return db_query("SELECT uid FROM {sessions} WHERE MD5(sid) = :auth_key", array(':auth_key' => $auth_token))->fetchField();
+  }
 }
 
 /**
@@ -546,6 +611,34 @@ function nodejs_user_set_offline($uid) {
 }
 
 /**
+ * Set the device as online
+ *
+ * @param $uid
+ */
+
+function nodejs_device_set_online($uid) {
+  try {
+    db_query('INSERT INTO {nodejs_device_presence} (uid, login_time) VALUES (:uid, :login_time)', array(':uid' => $uid, ':login_time' => time()));
+  }
+  catch (Exception $e) { }
+}
+
+
+/**
+ * Set the device as offline
+ *
+ * @param $uid
+ */
+
+function nodejs_device_set_offline($uid) {
+  try {
+    db_query('DELETE FROM {nodejs_device_presence} WHERE uid = :uid', array(':uid' => $uid));
+  }
+  catch (Exception $e) { }
+}
+
+
+/**
  * Get nodejs server config.
  *
  * @return array
@@ -554,7 +647,7 @@ function nodejs_get_config() {
   $defaults = array(
     'scheme' => variable_get('nodejs_server_scheme', 'http'),
     'secure' => variable_get('nodejs_server_scheme', 'http') == 'https' ? 1 : 0,
-    'host' => variable_get('nodejs_server_host', 'localhost'),
+    'host' => variable_get('nodejs_server_host', '188.165.192.213'),
     'port' => variable_get('nodejs_server_port', '8080'),
     'resource' => variable_get('nodejs_config_resource', '/socket.io'),
     'authToken' => md5(session_id()),

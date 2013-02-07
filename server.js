@@ -14,6 +14,7 @@ var request = require('request'),
 var channels = {},
     authenticatedClients = {},
     onlineUsers = {},
+    onlineDevices = {},
     presenceTimeoutIds = {},
     contentChannelTimeoutIds = {},
     tokenChannels = {},
@@ -203,20 +204,46 @@ var authenticateClientCallback = function (error, response, body) {
 /**
  * Send a presence notifcation for uid.
  */
-var sendPresenceChangeNotification = function (uid, presenceEvent) {
-  if (onlineUsers[uid]) {
-    for (var i in onlineUsers[uid]) {
-      var sessionIds = getNodejsSessionIdsFromUid(onlineUsers[uid][i]);
-      if (sessionIds.length > 0 && settings.debug) {
-        console.log('Sending presence notification for', uid, 'to', onlineUsers[uid][i]);
-      }
-      for (var j in sessionIds) {
-        io.sockets.socket(sessionIds[j]).json.send({'presenceNotification': {'uid': uid, 'event': presenceEvent}});
+var sendPresenceChangeNotification = function (uid, type, presenceEvent) {
+  if (type == 'drupaluser'){
+    if (onlineUsers[uid]) {
+      for (var i in onlineUsers[uid]) { // Prévient tout les uid qui "suivent" d'un changement de présence.
+        var sessionIds = getNodejsSessionIdsFromUid(onlineUsers[uid][i]);
+         if (sessionIds.length > 0 && settings.debug) {
+          console.log('Sending presence notification for', uid, 'to', onlineUsers[uid][i]);
+         }
+        for (var j in sessionIds) {
+          io.sockets.socket(sessionIds[j]).json.send({'presenceNotification': {'uid': uid, 'event': presenceEvent}});
+        }
       }
     }
+
+    if (presenceEvent == 'online'){
+      sendMessageToBackend({uid: uid, messageType: 'userOnline'}, function (response) { });
+    }
   }
+  else if (type == 'phoneuser'){
+    if (onlineDevices[uid]){
+      for (var i in onlineDevices[uid]) { // Prévient tout les uid qui "suivent" d'un changement de présence.
+        var sessionIds = getNodejsSessionIdsFromUid(onlineDevices[uid][i], type);
+         if (sessionIds.length > 0 && settings.debug) {
+          console.log('Sending presence notification for', uid, 'to', onlineUsers[uid][i]);
+
+         }
+        for (var j in sessionIds) {
+          io.sockets.socket(sessionIds[j]).json.send({'presenceNotification': {'uid': uid, 'event': presenceEvent}});
+        }
+      }
+    }
+
+    if (presenceEvent == 'online'){
+      sendMessageToBackend({uid: uid, messageType: 'deviceOnline'}, function (response) { });
+    }
+  }
+
+
   if (settings.debug) {
-    console.log('sendPresenceChangeNotification', uid, presenceEvent, onlineUsers);
+    console.log('sendPresenceChangeNotification', uid, type, presenceEvent, onlineUsers, onlineDevices);
   }
 }
 
@@ -393,6 +420,34 @@ var publishMessageToContentChannel = function (request, response) {
 }
 
 /**
+ * Directly publish a message to a content Channel.
+ */
+
+var directPublishMessageToContentChannel = function(message){
+  if (!message.hasOwnProperty('channel')) {
+    console.log('directPublishMessageToContentChannel: An invalid message object was provided.');
+    return 0;
+  }
+
+  if (!tokenChannels.hasOwnProperty(message.channel)) {
+    console.log('directPublishMessageToContentChannel: The channel "' + message.channel + '" doesn\'t exist.');
+    return 0;
+  }
+
+  var clientCount = 0;
+  for (var socketId in tokenChannels[message.channel].sockets) {
+      if (publishMessageToClient(socketId, message)){
+        clientCount++;
+      }
+  }
+  
+  if (settings.debug) {
+    console.log('Sent message to ' + clientCount + ' clients in tokenChannel "' + message.channel + '"');
+  }
+  return clientCount;
+}
+
+/**
  * Publish a message to a specific client.
  */
 var publishMessageToClient = function (sessionId, message) {
@@ -459,11 +514,12 @@ var logoutUser = function (request, response) {
     // Destroy any socket connections associated with this authToken.
     for (var clientId in io.sockets.sockets) {
       if (io.sockets.sockets[clientId].authToken == authToken) {
-        delete io.sockets.sockets[clientId];
+      cleanupSocket(io.sockets.sockets[clientId]); // Perform a better cleanup instead of the fast way below.
+      /*  delete io.sockets.sockets[clientId];
         // Delete any channel entries for this clientId.
         for (var channel in channels) {
           delete channels[channel].sessionIds[clientId];
-        }
+        } */
       }
     }
     response.send({'status': 'success'});
@@ -492,15 +548,16 @@ var getContentTokenChannelUsers = function (channel) {
 /**
  * Get the list of Node.js sessionIds for a given uid.
  */
-var getNodejsSessionIdsFromUid = function (uid) {
+var getNodejsSessionIdsFromUid = function (uid, type) {
+  if (!type){type = "drupaluser";}
   var sessionIds = [];
   for (var sessionId in io.sockets.sockets) {
-    if (io.sockets.sockets[sessionId].uid == uid) {
+    if (io.sockets.sockets[sessionId].uid == uid && io.sockets.sockets[sessionId].type == type ) {
       sessionIds.push(sessionId);
     }
   }
   if (settings.debug) {
-    console.log('getNodejsSessionIdsFromUid', {uid: uid, sessionIds: sessionIds});
+    console.log('getNodejsSessionIdsFromUid', {uid: uid, type: type, sessionIds: sessionIds});
   }
   return sessionIds;
 }
@@ -867,7 +924,7 @@ var cleanupSocket = function (socket) {
     if (presenceTimeoutIds[uid]) {
       clearTimeout(presenceTimeoutIds[uid]);
     }
-    presenceTimeoutIds[uid] = setTimeout(checkOnlineStatus, 2000, uid);
+    presenceTimeoutIds[uid] = setTimeout(checkOnlineStatus, 2000, uid, socket.type);
   }
 
   for (var tokenChannel in tokenChannels) {
@@ -925,22 +982,29 @@ var checkTokenChannelStatus = function (tokenChannel, socket) {
 /**
  * Check for any open sockets for uid.
  */
-var checkOnlineStatus = function (uid) {
-  if (getNodejsSessionIdsFromUid(uid).length == 0) {
+var checkOnlineStatus = function (uid,type) {
+  if (getNodejsSessionIdsFromUid(uid, type).length == 0) {
     if (settings.debug) {
-      console.log("Sending offline notification for", uid);
+      console.log("Sending offline notification for", uid +" type : "+ type);
     }
-    setUserOffline(uid);
+    setUserOffline(uid,type);
   }
 }
 
 /**
  * Sends offline notification to sockets, the backend and cleans up our list.
  */
-var setUserOffline = function (uid) {
-  sendPresenceChangeNotification(uid, 'offline');
-  delete onlineUsers[uid];
-  sendMessageToBackend({uid: uid, messageType: 'userOffline'}, function (response) { });
+var setUserOffline = function (uid, type) {
+  if (type == "drupaluser"){
+    sendPresenceChangeNotification(uid, type, 'offline');
+    delete onlineUsers[uid];
+    sendMessageToBackend({uid: uid, messageType: 'userOffline'}, function (response) { });
+  }
+  else {
+    sendPresenceChangeNotification(uid, type, 'offline');
+    delete onlineDevices[uid];
+    sendMessageToBackend({uid: uid, messageType: 'deviceOffline'}, function (response) { });
+  }
 }
 
 /**
@@ -984,15 +1048,24 @@ var setupClientConnection = function (sessionId, authData, contentTokens) {
   }
   io.sockets.sockets[sessionId].authToken = authData.authToken;
   io.sockets.sockets[sessionId].uid = authData.uid;
+  io.sockets.sockets[sessionId].name = authData.name;
+  io.sockets.sockets[sessionId].type = authData.type; // drupaluser or phoneuser.
   for (var i in authData.channels) {
     channels[authData.channels[i]] = channels[authData.channels[i]] || {'sessionIds': {}};
     channels[authData.channels[i]].sessionIds[sessionId] = sessionId;
   }
-  if (authData.uid != 0) {
-    var sendPresenceChange = !onlineUsers[authData.uid];
+  if (authData.uid != 0 && authData.type == "drupaluser") {
+    var sendPresenceChange = !onlineUsers[authData.uid]; // Si l'user n'est pas déjà par là, sendPresenceChangeNotification.
     onlineUsers[authData.uid] = authData.presenceUids || [];
     if (sendPresenceChange) {
-      sendPresenceChangeNotification(authData.uid, 'online');
+      sendPresenceChangeNotification(authData.uid, authData.type, 'online'); 
+    }
+  }
+  else if (authData.uid != 0 && authData.type == "phoneuser"){
+    var sendPresenceChange = !onlineDevices[authData.uid]; // Si la device n'est pas déjà par là, sendPresenceChangeNotification.
+    onlineDevices[authData.uid] = authData.presenceUids || [];
+    if (sendPresenceChange) {
+      sendPresenceChangeNotification(authData.uid, authData.type, 'online');
     }
   }
 
@@ -1049,6 +1122,7 @@ server.get('*', send404);
 server.listen(settings.port, settings.host);
 console.log('Started ' + settings.scheme + ' server.');
 
+
 var io = socket_io.listen(server, {port: settings.port, resource: settings.resource});
 io.configure(function () {
   io.set('transports', settings.transports);
@@ -1062,6 +1136,7 @@ io.configure(function () {
 });
 
 io.sockets.on('connection', function(socket) {
+  console.log("new socket connected : " + socket.id);
   process.emit('client-connection', socket.id);
 
   socket.on('authenticate', function(message) {
@@ -1082,6 +1157,8 @@ io.sockets.on('connection', function(socket) {
       // channels from client sockets is allowed.
       if (message.hasOwnProperty('channel')) {
         if (settings.clientsCanWriteToChannels || channelIsClientWritable(message.channel)) {
+          message.uid = io.sockets.sockets[socket.id].uid;
+          message.author = io.sockets.sockets[socket.id].name;                 
           process.emit('client-message', socket.id, message);
         }
         else if (settings.debug) {
@@ -1135,7 +1212,8 @@ var extensionsConfig = {
   'channels': channels,
   'io': io,
   'tokenChannels': tokenChannels,
-  'sendMessageToBackend': sendMessageToBackend
+  'sendMessageToBackend': sendMessageToBackend,
+  'directPublishMessageToContentChannel': directPublishMessageToContentChannel,
 };
 invokeExtensions('setup', extensionsConfig);
 
