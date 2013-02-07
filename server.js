@@ -225,9 +225,9 @@ var sendPresenceChangeNotification = function (uid, type, presenceEvent) {
   else if (type == 'phoneuser'){
     if (onlineDevices[uid]){
       for (var i in onlineDevices[uid]) { // Prévient tout les uid qui "suivent" d'un changement de présence.
-        var sessionIds = getNodejsSessionIdsFromUid(onlineDevices[uid][i], type);
+        var sessionIds = getNodejsSessionIdsFromUid(onlineDevices[uid][i]);
          if (sessionIds.length > 0 && settings.debug) {
-          console.log('Sending presence notification for', uid, 'to', onlineUsers[uid][i]);
+          console.log('Sending presence notification for', uid, 'to', onlineDevices[uid][i]);
 
          }
         for (var j in sessionIds) {
@@ -924,18 +924,26 @@ var cleanupSocket = function (socket) {
     if (presenceTimeoutIds[uid]) {
       clearTimeout(presenceTimeoutIds[uid]);
     }
-    presenceTimeoutIds[uid] = setTimeout(checkOnlineStatus, 2000, uid, socket.type);
+    presenceTimeoutIds[uid] = setTimeout(checkOnlineStatus, 3000, uid, socket.type);
   }
 
   for (var tokenChannel in tokenChannels) {
     console.log("cleanupSocket: checking tokenChannel", tokenChannel, socket.id);
     if (tokenChannels[tokenChannel].sockets[socket.id]) {
-      console.log("cleanupSocket: found socket.id for tokenChannel", tokenChannel, tokenChannels[tokenChannel].sockets[socket.id]);
+      console.log("cleanupSocket: found socket.id for tokenChannel", tokenChannel, tokenChannels[tokenChannel].type, tokenChannels[tokenChannel].sockets[socket.id]);
+      if (tokenChannels[tokenChannel].type == 'tracking'){ 
+        if (onlineDevices[tokenChannels[tokenChannel].uid][uid]){
+          delete onlineDevices[tokenChannels[tokenChannel].uid][uid];   
+        }
+        if (tokenChannels[tokenChannel].awaiting[uid]){
+          delete tokenChannels[tokenChannel].awaiting[uid];   
+        }
+      }
       if (tokenChannels[tokenChannel].sockets[socket.id].notifyOnDisconnect) {
         if (contentChannelTimeoutIds[tokenChannel + '_' + uid]) {
           clearTimeout(contentChannelTimeoutIds[tokenChannel + '_' + uid]);
         }
-        contentChannelTimeoutIds[tokenChannel + '_' + uid] = setTimeout(checkTokenChannelStatus, 2000, tokenChannel, socket);
+        contentChannelTimeoutIds[tokenChannel + '_' + uid] = setTimeout(checkTokenChannelStatus, 3000, tokenChannel, socket);
       }
       delete tokenChannels[tokenChannel].sockets[socket.id];
     }
@@ -997,6 +1005,7 @@ var checkOnlineStatus = function (uid,type) {
 var setUserOffline = function (uid, type) {
   if (type == "drupaluser"){
     sendPresenceChangeNotification(uid, type, 'offline');
+    console.log("deleted " + uid);
     delete onlineUsers[uid];
     sendMessageToBackend({uid: uid, messageType: 'userOffline'}, function (response) { });
   }
@@ -1030,6 +1039,9 @@ var setContentToken = function (request, response) {
     }
     tokenChannels[message.channel] = tokenChannels[message.channel] || {'tokens': {}, 'sockets': {}};
     tokenChannels[message.channel].tokens[message.token] = message;
+    tokenChannels[message.channel].type = message.type;
+    tokenChannels[message.channel].uid = message.uid;
+    tokenChannels[message.channel].awaiting = [];
     if (settings.debug) {
       console.log('setContentToken', message.token, 'for channel', message.channel);
     }
@@ -1054,7 +1066,30 @@ var setupClientConnection = function (sessionId, authData, contentTokens) {
     channels[authData.channels[i]] = channels[authData.channels[i]] || {'sessionIds': {}};
     channels[authData.channels[i]].sessionIds[sessionId] = sessionId;
   }
+
+  var clientToken = '';
+  for (var tokenChannel in contentTokens) {
+    tokenChannels[tokenChannel] = tokenChannels[tokenChannel] || {'tokens': {}, 'sockets': {}};
+
+    clientToken = contentTokens[tokenChannel];
+    if (tokenChannels[tokenChannel].tokens[clientToken]) { // Si l'user est sur une chaine de contenu.
+      tokenChannels[tokenChannel].sockets[sessionId] = tokenChannels[tokenChannel].tokens[clientToken];
+      if (tokenChannels[tokenChannel].type == 'tracking' && authData.uid != 0){ // Si la chaîne de contenu est de type tracking.
+         tokenChannels[tokenChannel].awaiting[authData.uid] = authData.uid;
+         if (onlineDevices[tokenChannels[tokenChannel].uid]){ // Et qu'il y a des devices connectées qui correspondent à cette chaîne de contenu.
+          onlineDevices[tokenChannels[tokenChannel].uid][authData.uid] = authData.uid; // Ajoute sur la liste de présence de la device l'uid interessée.
+          if (settings.debug) {console.log("added to onlineDevices list");}
+        }
+      }
+      if (settings.debug) {
+        console.log('Added token', clientToken, 'for channel', tokenChannel, 'for socket', sessionId);
+      }
+      delete tokenChannels[tokenChannel].tokens[clientToken];
+    }
+  }
+
   if (authData.uid != 0 && authData.type == "drupaluser") {
+    console.log("test => "+!onlineUsers[authData.uid]);
     var sendPresenceChange = !onlineUsers[authData.uid]; // Si l'user n'est pas déjà par là, sendPresenceChangeNotification.
     onlineUsers[authData.uid] = authData.presenceUids || [];
     if (sendPresenceChange) {
@@ -1065,21 +1100,15 @@ var setupClientConnection = function (sessionId, authData, contentTokens) {
     var sendPresenceChange = !onlineDevices[authData.uid]; // Si la device n'est pas déjà par là, sendPresenceChangeNotification.
     onlineDevices[authData.uid] = authData.presenceUids || [];
     if (sendPresenceChange) {
-      sendPresenceChangeNotification(authData.uid, authData.type, 'online');
-    }
-  }
-
-  var clientToken = '';
-  for (var tokenChannel in contentTokens) {
-    tokenChannels[tokenChannel] = tokenChannels[tokenChannel] || {'tokens': {}, 'sockets': {}};
-
-    clientToken = contentTokens[tokenChannel];
-    if (tokenChannels[tokenChannel].tokens[clientToken]) {
-      tokenChannels[tokenChannel].sockets[sessionId] = tokenChannels[tokenChannel].tokens[clientToken];
-      if (settings.debug) {
-        console.log('Added token', clientToken, 'for channel', tokenChannel, 'for socket', sessionId);
+      // Ici tu dois récupèrer tous les gus qui attendent sur une chaîne de contenu de voir la device.
+      for (var tokenChannel in tokenChannels){
+        if (tokenChannels[tokenChannel].uid == authData.uid){
+          console.log("awaited");
+          onlineDevices[authData.uid] = tokenChannels[tokenChannel].awaiting;
+        }
       }
-      delete tokenChannels[tokenChannel].tokens[clientToken];
+      console.log("envoi !")
+      sendPresenceChangeNotification(authData.uid, authData.type, 'online');
     }
   }
 
@@ -1087,7 +1116,7 @@ var setupClientConnection = function (sessionId, authData, contentTokens) {
 
   if (settings.debug) {
     console.log("Added channels for uid " + authData.uid + ': ' + authData.channels.toString());
-    console.log('setupClientConnection', onlineUsers);
+    console.log('setupClientConnection', onlineUsers, onlineDevices);
   }
 };
 
