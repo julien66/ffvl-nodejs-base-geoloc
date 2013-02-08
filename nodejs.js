@@ -39,11 +39,11 @@ Drupal.Nodejs.runCallbacks = function (message) {
     });
   }
   else if (message.presenceNotification != undefined) {
+    //console.log("yes !!");
     $.each(Drupal.Nodejs.presenceCallbacks, function () {
-      if ($.isFunction(this.callback)) {
-        try {
-          this.callback(message);
-          console.log(message);
+      if ($.isFunction(this)) {
+         try {
+          this(message.presenceNotification);
         }
         catch (exception) {}
       }

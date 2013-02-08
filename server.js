@@ -213,7 +213,7 @@ var sendPresenceChangeNotification = function (uid, type, presenceEvent) {
           console.log('Sending presence notification for', uid, 'to', onlineUsers[uid][i]);
          }
         for (var j in sessionIds) {
-          io.sockets.socket(sessionIds[j]).json.send({'presenceNotification': {'uid': uid, 'event': presenceEvent}});
+          io.sockets.socket(sessionIds[j]).json.send({'presenceNotification': {'uid': uid, 'event': presenceEvent, 'type': type}});
         }
       }
     }
@@ -231,7 +231,7 @@ var sendPresenceChangeNotification = function (uid, type, presenceEvent) {
 
          }
         for (var j in sessionIds) {
-          io.sockets.socket(sessionIds[j]).json.send({'presenceNotification': {'uid': uid, 'event': presenceEvent}});
+          io.sockets.socket(sessionIds[j]).json.send({'presenceNotification': {'uid': uid, 'event': presenceEvent, 'type': type}});
         }
       }
     }
@@ -932,7 +932,7 @@ var cleanupSocket = function (socket) {
     if (tokenChannels[tokenChannel].sockets[socket.id]) {
       console.log("cleanupSocket: found socket.id for tokenChannel", tokenChannel, tokenChannels[tokenChannel].type, tokenChannels[tokenChannel].sockets[socket.id]);
       if (tokenChannels[tokenChannel].type == 'tracking'){ 
-        if (onlineDevices[tokenChannels[tokenChannel].uid][uid]){
+        if (onlineDevices[tokenChannels[tokenChannel].uid] && onlineDevices[tokenChannels[tokenChannel].uid][uid]){
           delete onlineDevices[tokenChannels[tokenChannel].uid][uid];   
         }
         if (tokenChannels[tokenChannel].awaiting[uid]){
