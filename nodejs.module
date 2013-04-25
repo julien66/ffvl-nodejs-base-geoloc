@@ -1,41 +1,14 @@
 <?php
-
-/**
- * Implementation of hook_enable().
- */
-function nodejs_enable() {
-  if (!field_info_field('field_trackeur')) { // Check if our field is not already created.
-    $field = array(
-        'field_name' => 'field_trackeur', 
-        'type' => 'text',
-    );
-    field_create_field($field);
-
-    // Create the instance on the bundle.
-    $instance = array(
-        'field_name' => 'field_trackeur', 
-	'description' => t("Entrez l'identifiant de votre trackeur"),
-        'entity_type' => 'user', 
-        'label' => 'Mon trackeur', 
-        'bundle' => 'user', 
-        'widget' => array(
-            'type' => 'textfield',
-        ), 
-    );
-    field_create_instance($instance);
-  }
-}
 	
-
 /**
  * Implementation of hook_disable().
  */
-/*function nodejs_disable(){
+function nodejs_disable(){
 	if (field_info_field('field_trackeur')) { // Check if our field is not already created.
 		field_delete_field('field_trackeur'); // Détruit le field_trackeur.
 		field_purge_batch(1);
   	}
-}*/
+}
 
 
 /**
@@ -478,7 +451,7 @@ function nodejs_message_handler() {
       break;
 
     case 'userOffline':
-      nodejs_user_set_offline($message['uid']);
+      	nodejs_user_set_offline($message['uid']);
       break;
 
     case 'userOnline':
@@ -561,10 +534,10 @@ function nodejs_auth_check($message) {
  * Default Node.js auth check callback implementation.
  */
 function nodejs_auth_check_callback($auth_token) {
-  if (substr($auth_token,0,5) == 'uuid-' ){
-	return db_query("SELECT entity_id FROM {field_data_field_trackeur} WHERE field_trackeur_value = :uuid", array(':uuid' => substr($auth_token,5) ))->fetchField();
+  if (substr($auth_token,0,5) == 'uuid-' ){ // Si le token vient de phonegap...
+	return db_query("SELECT uid FROM {tracking_devices} WHERE td_id = :uuid AND td_type='ffvl'", array(':uuid' => substr($auth_token,5) ))->fetchField();
   }
-  else
+  else // Si le token vient d'un navigateur..
   {
   return db_query("SELECT uid FROM {sessions} WHERE MD5(sid) = :auth_key", array(':auth_key' => $auth_token))->fetchField();
   }

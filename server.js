@@ -1166,6 +1166,7 @@ io.configure(function () {
 
 io.sockets.on('connection', function(socket) {
   console.log("new socket connected : " + socket.id);
+  console.log("transport => "+ io.transports[socket.id].name);
   process.emit('client-connection', socket.id);
 
   socket.on('authenticate', function(message) {

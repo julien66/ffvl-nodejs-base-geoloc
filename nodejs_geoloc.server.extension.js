@@ -42,7 +42,14 @@ exports.setup = function (config) {
 				if(err){console.log(err);}
 			}
 		);
-		directPublishMessageToContentChannel(message); // Publier sur la chaîne.
+		if (message.ghost != true){ // Si le mode fantome n'est pas activé.
+			directPublishMessageToContentChannel(message); // Publier sur la chaîne.
+		}
+		else{ // Sinon
+			message.position.coords.latitude = 0; // Mettre les positions à 0 avant de publier !
+			message.posision.coords.longitude = 0;
+			directPublishMessageToContentChannel(message)
+		}
 	}
 
   });
